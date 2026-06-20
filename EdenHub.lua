@@ -1,5 +1,5 @@
 --[[
-    EdenHub v2.0 – Full UI Script for Grow a Garden 2
+    EdenHub v0.0.1 – Full UI Script for Grow a Garden 2
     All features are stubbed – replace the placeholder functions with actual automation logic.
 ]]
 
