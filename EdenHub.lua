@@ -1,7 +1,6 @@
 --[[
-    EdenHub.lua v0.2.0 – "Upgrade Menu" Update
-    Added dedicated Upgrades tab with auto‑upgrade toggles, status labels,
-    and a teleport to the in‑game upgrade interface.
+    EdenHub.lua v0.2.1 – "Upgrade Menu" Update + UI additions
+    Added stock panels, restock countdown, wild-pet scanner display, and status updates (placeholders).
 ]]
 
 -- // Library & Window
@@ -26,9 +25,9 @@ local UITheme = {
 -- // Main Window
 local win = Fluent:CreateWindow({
     Title = "EdenHub 🌿",
-    Subtitle = "v0.2.0 Upgrade | Grow A Garden 2",
+    Subtitle = "v0.2.1 Upgrade | Grow A Garden 2",
     Theme = "Dark",
-    Size = UDim2.fromOffset(620, 500),
+    Size = UDim2.fromOffset(620, 600),
     Acrylic = false,
     MinimizeKey = Enum.KeyCode.RightControl,
     TabWidth = 100,
@@ -69,7 +68,10 @@ _G.AutoBuySeeds = false
 _G.AutoBuyGear = false
 _G.SelectedSeeds = {}
 _G.SelectedGear = {}
-_G.RestockTimer = 0
+_G.RestockTimer = 60
+_G.RestockCountdown = 0
+_G.SeedStock = {}
+_G.GearStock = {}
 
 -- Pets
 _G.AutoHatchEggs = false
@@ -80,6 +82,8 @@ _G.WildPetScan = false
 _G.TPtoSelectedWild = false
 _G.TPtoNearestWild = false
 _G.AutoBuyWildPets = false
+_G.SelectedWildPetIndex = nil
+_G.WildPetsFound = {}
 
 -- Movement
 _G.WalkSpeed = 16
@@ -202,9 +206,10 @@ end
 Buy:Toggle{Title="Auto Buy Gear", Default=false, Callback=function(s) _G.AutoBuyGear=s end}
 
 Buy:Section{Title="Stock & Restock"}
-Buy:Label{Text="Seed Stock: (placeholder)"}
-Buy:Label{Text="Gear Stock: (placeholder)"}
-Buy:Slider{Title="Restock Timer (s)", Default=60, Min=10, Max=300, Callback=function(v) _G.RestockTimer=v end}
+local seedStockLabel = Buy:Label{Text="Seed Stock: (placeholder)", Color=UITheme.SubText}
+local gearStockLabel = Buy:Label{Text="Gear Stock: (placeholder)", Color=UITheme.SubText}
+local restockLabel = Buy:Label{Text="Restock in: --s", Color=UITheme.Warning}
+Buy:Slider{Title="Restock Timer (s)", Default=60, Min=10, Max=300, Callback=function(v) _G.RestockTimer=v; _G.RestockCountdown=v end}
 
 -- ================== PETS ==================
 PetsTab:Section{Title="Pet Automation"}
@@ -215,9 +220,18 @@ PetsTab:Toggle{Title="Auto Equip Best Pets", Default=false, Callback=function(s)
 
 PetsTab:Section{Title="Wild Pets Scanner"}
 PetsTab:Toggle{Title="Scan Wild Pets", Default=false, Callback=function(s) _G.WildPetScan=s end}
-PetsTab:Label{Text="Closest: (placeholder)", Color=UITheme.SubText}
+local closestLabel = PetsTab:Label{Text="Closest: (placeholder)", Color=UITheme.SubText}
+local wildPetsInfoLabels = {}
+-- create placeholders for up to 5 wild pets
+for i=1,5 do
+    wildPetsInfoLabels[i] = PetsTab:Label{Text="-", Color=UITheme.SubText}
+end
 PetsTab:Button{Title="TP to Selected Wild Pet", Callback=function()
-    Fluent:Notify{Title="TP", Content="Teleporting to selected wild pet (placeholder)", Duration=3}
+    if _G.SelectedWildPetIndex then
+        Fluent:Notify{Title="TP", Content="Teleporting to selected wild pet (placeholder)", Duration=3}
+    else
+        Fluent:Notify{Title="TP", Content="No wild pet selected", Duration=3}
+    end
 end}
 PetsTab:Button{Title="TP to Nearest Wild Pet", Callback=function()
     Fluent:Notify{Title="TP", Content="Teleporting to nearest wild pet (placeholder)", Duration=3}
@@ -235,8 +249,8 @@ end
 
 -- ================== UPGRADES (NEW TAB) ==================
 Upgrades:Section{Title="Garden Plots"}
-Upgrades:Label{Text="Current Plots: 0 / Max: 0", Color=UITheme.SubText}  -- update in loop
-Upgrades:Label{Text="Next Upgrade Cost: 0 Sheckles", Color=UITheme.Warning}
+local plotsLabel = Upgrades:Label{Text="Current Plots: 0 / Max: 0", Color=UITheme.SubText}  -- update in loop
+local nextCostLabel = Upgrades:Label{Text="Next Upgrade Cost: 0 Sheckles", Color=UITheme.Warning}
 Upgrades:Toggle{Title="Auto Expand Garden", Default=false, Callback=function(s)
     _G.AutoUpgradePlots = s
     _G.AutoExpandGarden = s   -- keep in sync with Farm toggle
@@ -246,14 +260,14 @@ Upgrades:Button{Title="Expand Now", Callback=function()
 end}
 
 Upgrades:Section{Title="Backpack"}
-Upgrades:Label{Text="Current Capacity: 0", Color=UITheme.SubText}
+local backpackCapLabel = Upgrades:Label{Text="Current Capacity: 0", Color=UITheme.SubText}
 Upgrades:Toggle{Title="Auto Upgrade Backpack", Default=false, Callback=function(s) _G.AutoUpgradeBackpack=s end}
 Upgrades:Button{Title="Upgrade Backpack Now", Callback=function()
     Fluent:Notify{Title="Upgrade", Content="Upgrading backpack (placeholder)", Duration=3}
 end}
 
 Upgrades:Section{Title="Tools"}
-Upgrades:Label{Text="Tool Levels: (placeholder)", Color=UITheme.SubText}
+local toolsLabel = Upgrades:Label{Text="Tool Levels: (placeholder)", Color=UITheme.SubText}
 Upgrades:Toggle{Title="Auto Upgrade Tools", Default=false, Callback=function(s) _G.AutoUpgradeTools=s end}
 Upgrades:Button{Title="Upgrade Tools Now", Callback=function()
     Fluent:Notify{Title="Upgrade", Content="Upgrading tools (placeholder)", Duration=3}
@@ -299,6 +313,7 @@ local webhookEvents = {
 }
 for _, ev in ipairs(webhookEvents) do
     Webhook:Toggle{Title=ev, Default=false, Callback=function(s)
+        -- map friendly names to keys if needed (placeholder)
         _G.WebhookEvents[ev] = s
     end}
 end
@@ -315,13 +330,13 @@ end
 
 -- ================== STATUS ==================
 Status:Section{Title="Live Status"}
-Status:Label{Text="Sheckles: 0", Color=UITheme.Accent}
-Status:Label{Text="Backpack Fruits Ready: 0", Color=UITheme.Accent}
-Status:Label{Text="State: Idle", Color=UITheme.SubText}
+local shecklesLabel = Status:Label{Text="Sheckles: 0", Color=UITheme.Accent}
+local backpackReadyLabel = Status:Label{Text="Backpack Fruits Ready: 0", Color=UITheme.Accent}
+local stateLabel = Status:Label{Text="State: Idle", Color=UITheme.SubText}
 
 -- ================== UPDATES ==================
 Updates:Section{Title="Update Center"}
-Updates:Label{Text="Your version: v0.2.0", Color=UITheme.Accent}
+Updates:Label{Text="Your version: v0.2.1", Color=UITheme.Accent}
 local updateStatusLabel = Updates:Label{Text="Checking..."}
 Updates:Button{Title="Refresh Changelog", Callback=function()
     Fluent:Notify{Title="Changelog", Content="Refreshed (placeholder)", Duration=3}
@@ -337,13 +352,81 @@ task.spawn(function()
 end)
 
 -- // Final notification
-Fluent:Notify{Title="EdenHub Full + Upgrades", Content="v0.2.0 loaded with Upgrade Menu!", Duration=8}
+Fluent:Notify{Title="EdenHub Full + Upgrades", Content="v0.2.1 loaded with Upgrade Menu and UI additions!", Duration=6}
 
--- // Status updater loop (placeholder)
+-- // Status updater loop (placeholder) - updates stocks, restock countdown, wild pet scan, and status labels
 task.spawn(function()
-    while wait(2) do
-        -- Update status labels with real game data
-        -- e.g., local sheckles = game.Players.LocalPlayer.leaderstats.Sheckles.Value
-        -- Update upgrade labels similarly
+    -- initialize restock countdown
+    _G.RestockCountdown = _G.RestockTimer
+    while wait(1) do
+        -- placeholder: update sheckles from leaderstats if available
+        local success, sheckles = pcall(function()
+            return tonumber((game.Players.LocalPlayer:FindFirstChild("leaderstats") and game.Players.LocalPlayer.leaderstats:FindFirstChild("Sheckles") and game.Players.LocalPlayer.leaderstats.Sheckles.Value) or 0)
+        end)
+        if success and shecklesLabel then shecklesLabel.Text = "Sheckles: "..tostring(sheckles) end
+
+        -- placeholder: backpack ready count
+        local bpReady = 0
+        if backpackReadyLabel then backpackReadyLabel.Text = "Backpack Fruits Ready: "..tostring(bpReady) end
+
+        -- restock countdown logic (only visual)
+        if _G.AutoBuySeeds or _G.AutoBuyGear then
+            _G.RestockCountdown = (_G.RestockCountdown > 0) and (_G.RestockCountdown - 1) or _G.RestockTimer
+        else
+            _G.RestockCountdown = _G.RestockTimer
+        end
+        if restockLabel then restockLabel.Text = "Restock in: "..tostring(_G.RestockCountdown).."s" end
+
+        -- update seed/gear stock labels (placeholders)
+        local seedStockStr = table.concat((_G.SeedStock and #_G.SeedStock>0 and _G.SeedStock) or {"No stock"}, ", ")
+        local gearStockStr = table.concat((_G.GearStock and #_G.GearStock>0 and _G.GearStock) or {"No stock"}, ", ")
+        if seedStockLabel then seedStockLabel.Text = "Seed Stock: "..seedStockStr end
+        if gearStockLabel then gearStockLabel.Text = "Gear Stock: "..gearStockStr end
+
+        -- Wild pet scanner (placeholder logic) - populate with fake data when scan is on
+        if _G.WildPetScan then
+            -- example placeholder list
+            _G.WildPetsFound = _G.WildPetsFound or {}
+            -- repopulate with sample entries for UI preview
+            if #_G.WildPetsFound == 0 then
+                _G.WildPetsFound = {
+                    {name="Spark Pupper", rarity="Rare", price=120, distance=12},
+                    {name="Glow Drake", rarity="Epic", price=450, distance=28},
+                    {name="Dirt Hopper", rarity="Common", price=20, distance=5},
+                }
+            end
+        else
+            _G.WildPetsFound = {}
+        end
+
+        -- update wild pet UI labels
+        for i=1,5 do
+            local lbl = wildPetsInfoLabels[i]
+            local entry = _G.WildPetsFound[i]
+            if entry then
+                lbl.Text = string.format("%d) %s — %s — %d$ — %dm", i, entry.name, entry.rarity, entry.price, entry.distance)
+            else
+                lbl.Text = "-"
+            end
+        end
+
+        -- update closest label
+        if #_G.WildPetsFound > 0 then
+            closestLabel.Text = "Closest: ".._G.WildPetsFound[1].name
+        else
+            closestLabel.Text = "Closest: (none)"
+        end
+
+        -- update upgrade labels placeholders
+        if plotsLabel then plotsLabel.Text = "Current Plots: 0 / Max: 0" end
+        if nextCostLabel then nextCostLabel.Text = "Next Upgrade Cost: 0 Sheckles" end
+        if backpackCapLabel then backpackCapLabel.Text = "Current Capacity: 0" end
+        if toolsLabel then toolsLabel.Text = "Tool Levels: (placeholder)" end
+
+        -- update state label (simple placeholder state logic)
+        stateLabel.Text = (_G.AutoFarmAll and "State: Auto Farming") or (_G.AutoBuySeeds and "State: Auto Buying Seeds") or "State: Idle"
     end
 end)
+
+
+-- end of file
